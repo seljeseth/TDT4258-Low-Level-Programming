@@ -3,6 +3,7 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <math.h>
 
 typedef enum
 {
@@ -41,6 +42,8 @@ uint32_t cache_size;
 uint32_t block_size = 64;
 cache_map_t cache_mapping;
 cache_org_t cache_org;
+
+// Cache info
 
 // USE THIS FOR YOUR CACHE STATISTICS
 cache_stat_t cache_statistics;
@@ -82,11 +85,30 @@ mem_access_t read_transaction(FILE *ptr_file)
         return access;
     }
 
-    /* If there are no more entries in the file,  
+    /* If there are no more entries in the file,
      * return an address 0 that will terminate the infinite loop in main
      */
     access.address = 0;
     return access;
+}
+
+uint32_t get_num_of_blocks()
+{
+    return cache_size / block_size;
+}
+
+uint32_t get_offset()
+{
+    return log(block_size) / log(2);
+}
+uint32_t get_index_size()
+{
+    return log(get_num_of_blocks()) / log(2);
+}
+uint32_t get_tag_size()
+{
+    //TODO: Change 32 to actual byte size
+    return (32 - get_index_size() - get_offset());
 }
 
 void main(int argc, char **argv)
@@ -165,6 +187,11 @@ void main(int argc, char **argv)
     }
 
     /* Print the statistics */
+    printf("Number of blocks: %d\n", get_num_of_blocks());
+    printf("Size of offset: %d\n", get_offset());
+    printf("Size of index: %d\n", get_index_size());
+    printf("Size of tag: %d\n", get_tag_size());
+
     // DO NOT CHANGE THE FOLLOWING LINES!
     printf("\nCache Statistics\n");
     printf("-----------------\n\n");
