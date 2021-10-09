@@ -3,7 +3,8 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
-#include <math.h>
+#include <math.h>   // So i can use log()
+#include <limits.h> // So I can use CHAR_BIT to convert from bytes to bit
 
 typedef enum
 {
@@ -42,8 +43,11 @@ uint32_t cache_size;
 uint32_t block_size = 64;
 cache_map_t cache_mapping;
 cache_org_t cache_org;
+uint32_t *cache;
 
 // Cache info
+int hits;
+int accesses;
 
 // USE THIS FOR YOUR CACHE STATISTICS
 cache_stat_t cache_statistics;
@@ -96,7 +100,6 @@ uint32_t get_num_of_blocks()
 {
     return cache_size / block_size;
 }
-
 uint32_t get_offset()
 {
     return log(block_size) / log(2);
@@ -107,8 +110,39 @@ uint32_t get_index_size()
 }
 uint32_t get_tag_size()
 {
-    //TODO: Change 32 to actual byte size
-    return (32 - get_index_size() - get_offset());
+    return ((CHAR_BIT * sizeof(uint32_t)) - get_index_size() - get_offset());
+}
+
+u_int32_t get_index(uint32_t address)
+{
+    return (((1 << get_index_size()) - 1) & (address >> get_offset()));
+}
+
+u_int32_t get_tag(uint32_t address)
+{
+    return (((1 << get_tag_size()) - 1) & (address >> ((get_offset() + get_index_size()) - 1)));
+}
+
+void check_cache(uint32_t address)
+{
+    cache_statistics.accesses++;
+    uint32_t index = get_index(address);
+    uint32_t tag = get_tag(address);
+    if (cache[index] != 0)
+    {
+        if (cache[index] == tag)
+        {
+            cache_statistics.hits++;
+        }
+        else
+        {
+            cache[index] = tag;
+        }
+    }
+    else
+    {
+        cache[index] = tag;
+    }
 }
 
 void main(int argc, char **argv)
@@ -163,14 +197,20 @@ void main(int argc, char **argv)
             exit(0);
         }
     }
-
     /* Open the file mem_trace.txt to read memory accesses */
-    FILE *ptr_file;
+    FILE *
+        ptr_file;
     ptr_file = fopen("mem_trace.txt", "r");
     if (!ptr_file)
     {
         printf("Unable to open the trace file\n");
         exit(1);
+    }
+    // Creating cache array the size of our cache
+    cache = (uint32_t *)malloc(sizeof(uint32_t) * get_num_of_blocks());
+    if (cache == NULL)
+    {
+        exit(1); //failed to allocate memory for our cache
     }
 
     /* Loop until whole trace file has been read */
@@ -181,8 +221,10 @@ void main(int argc, char **argv)
         //If no transactions left, break out of loop
         if (access.address == 0)
             break;
-        printf("%d %x\n", access.accesstype, access.address);
+        //printf("%d %x\n", access.accesstype, access.address);
         /* Do a cache access */
+
+        check_cache(access.address);
         // ADD YOUR CODE HERE
     }
 
@@ -202,4 +244,5 @@ void main(int argc, char **argv)
 
     /* Close the trace file */
     fclose(ptr_file);
+    free(cache);
 }
