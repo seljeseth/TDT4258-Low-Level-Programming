@@ -128,21 +128,7 @@ uint32_t get_tag_DM(uint32_t address)
 }
 uint32_t get_tag_FA(uint32_t address)
 {
-    return (((1 << get_tag_size() + get_index_size()) - 1) & (address >> get_offset()));
-}
-
-void add_to_cache(uint32_t element, uint32_t *cache)
-{
-    if (count == get_num_of_blocks())
-    {
-        remove_from_cache(cache);
-        add_to_cache(element, cache);
-    }
-    else
-    {
-        cache[count] = element;
-        count++;
-    }
+    return (((1 << (get_tag_size() + get_index_size())) - 1) & (address >> get_offset()));
 }
 void remove_from_cache(uint32_t *cache)
 {
@@ -152,32 +138,40 @@ void remove_from_cache(uint32_t *cache)
     }
     count--;
 }
+void add_to_cache(uint32_t element, uint32_t *cache, uint32_t size_of_cache)
+{
+    if (count == size_of_cache)
+    {
+        remove_from_cache(cache);
+        add_to_cache(element, cache, size_of_cache);
+    }
+    else
+    {
+        cache[count] = element;
+        count++;
+    }
+}
+
 void check_cache_DM(uint32_t address, uint32_t *cache)
 {
     cache_statistics.accesses++;
     uint32_t index = get_index(address);
     uint32_t tag = get_tag_DM(address);
-    if (cache[index] != 0)
+
+    if (cache[index] == tag)
     {
-        if (cache[index] == tag)
-        {
-            cache_statistics.hits++;
-        }
-        else
-        {
-            cache[index] = tag;
-        }
+        cache_statistics.hits++;
     }
     else
     {
         cache[index] = tag;
     }
 }
-void check_cache_FA(uint32_t address, uint32_t *cache)
+void check_cache_FA(uint32_t address, uint32_t *cache, uint32_t size_of_cache)
 {
     cache_statistics.accesses++;
     uint32_t tag = get_tag_FA(address);
-    for (int i = 0; i < get_num_of_blocks(); i++)
+    for (int i = 0; i < size_of_cache; i++)
     {
         if (cache[i] == tag)
         {
@@ -185,7 +179,7 @@ void check_cache_FA(uint32_t address, uint32_t *cache)
             return;
         }
     }
-    add_to_cache(tag, cache);
+    add_to_cache(tag, cache, size_of_cache);
 }
 
 void main(int argc, char **argv)
@@ -321,11 +315,11 @@ void main(int argc, char **argv)
                     break;
                 if (access.accesstype == instruction)
                 {
-                    check_cache_FA(access.address, cache_instructions);
+                    check_cache_FA(access.address, cache_instructions, size_of_cache);
                 }
                 else
                 {
-                    check_cache_FA(access.address, cache_data);
+                    check_cache_FA(access.address, cache_data, size_of_cache);
                 }
             }
             free(cache_instructions);
@@ -344,7 +338,7 @@ void main(int argc, char **argv)
                 //If no transactions left, break out of loop
                 if (access.address == 0)
                     break;
-                check_cache_FA(access.address, cache_data_and_instructions);
+                check_cache_FA(access.address, cache_data_and_instructions, get_num_of_blocks());
             }
             free(cache_data_and_instructions);
         }
