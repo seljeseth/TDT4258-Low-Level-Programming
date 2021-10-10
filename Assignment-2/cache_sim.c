@@ -37,17 +37,22 @@ typedef struct
     // remove the accesses or hits
 } cache_stat_t;
 
+typedef struct
+{
+    uint32_t *cache;
+    uint32_t count;
+} FA_cache;
 // DECLARE CACHES AND COUNTERS FOR THE STATS HERE
 
 uint32_t cache_size;
 uint32_t block_size = 64;
 cache_map_t cache_mapping;
 cache_org_t cache_org;
-uint32_t *cache;
-
+uint32_t *cache_instructions;
+uint32_t *cache_data;
+uint32_t *cache_data_and_instructions;
+uint32_t count = 0;
 // Cache info
-int hits;
-int accesses;
 
 // USE THIS FOR YOUR CACHE STATISTICS
 cache_stat_t cache_statistics;
@@ -78,7 +83,8 @@ mem_access_t read_transaction(FILE *ptr_file)
         }
         else
         {
-            printf("Unkown access type\n");
+            printf("%s\n", token);
+            printf("Unknown access type\n");
             exit(0);
         }
 
@@ -112,22 +118,45 @@ uint32_t get_tag_size()
 {
     return ((CHAR_BIT * sizeof(uint32_t)) - get_index_size() - get_offset());
 }
-
-u_int32_t get_index(uint32_t address)
+uint32_t get_index(uint32_t address)
 {
     return (((1 << get_index_size()) - 1) & (address >> get_offset()));
 }
-
-u_int32_t get_tag(uint32_t address)
+uint32_t get_tag_DM(uint32_t address)
 {
     return (((1 << get_tag_size()) - 1) & (address >> ((get_offset() + get_index_size()) - 1)));
 }
+uint32_t get_tag_FA(uint32_t address)
+{
+    return (((1 << get_tag_size() + get_index_size()) - 1) & (address >> get_offset()));
+}
 
-void check_cache(uint32_t address)
+void add(uint32_t element, uint32_t *cache)
+{
+    if (count == get_num_of_blocks())
+    {
+        delet(cache);
+        add(element, cache);
+    }
+    else
+    {
+        cache[count] = element;
+        count++;
+    }
+}
+void delet(uint32_t *cache)
+{
+    for (int i = 0; i < get_num_of_blocks() - 1; i++)
+    {
+        cache[i] = cache[i + 1];
+    }
+    count--;
+}
+void check_cache_DM(uint32_t address, uint32_t *cache)
 {
     cache_statistics.accesses++;
     uint32_t index = get_index(address);
-    uint32_t tag = get_tag(address);
+    uint32_t tag = get_tag_DM(address);
     if (cache[index] != 0)
     {
         if (cache[index] == tag)
@@ -143,6 +172,20 @@ void check_cache(uint32_t address)
     {
         cache[index] = tag;
     }
+}
+void check_cache_FA(uint32_t address, uint32_t *cache)
+{
+    cache_statistics.accesses++;
+    uint32_t tag = get_tag_FA(address);
+    for (int i = 0; i < get_num_of_blocks(); i++)
+    {
+        if (cache[i] == tag)
+        {
+            cache_statistics.hits++;
+            return;
+        }
+    }
+    add(tag, cache);
 }
 
 void main(int argc, char **argv)
@@ -200,32 +243,116 @@ void main(int argc, char **argv)
     /* Open the file mem_trace.txt to read memory accesses */
     FILE *
         ptr_file;
-    ptr_file = fopen("mem_trace.txt", "r");
+    ptr_file = fopen("mem_trace_2.txt", "r");
     if (!ptr_file)
     {
         printf("Unable to open the trace file\n");
         exit(1);
     }
-    // Creating cache array the size of our cache
-    cache = (uint32_t *)malloc(sizeof(uint32_t) * get_num_of_blocks());
-    if (cache == NULL)
-    {
-        exit(1); //failed to allocate memory for our cache
-    }
-
-    /* Loop until whole trace file has been read */
     mem_access_t access;
-    while (1)
+    switch (cache_mapping)
     {
-        access = read_transaction(ptr_file);
-        //If no transactions left, break out of loop
-        if (access.address == 0)
-            break;
-        //printf("%d %x\n", access.accesstype, access.address);
-        /* Do a cache access */
 
-        check_cache(access.address);
-        // ADD YOUR CODE HERE
+    case dm:
+        if (cache_org == sc)
+        {
+
+            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
+            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
+
+            if (cache_instructions == NULL || cache_data == NULL)
+            {
+                exit(1); //failed to allocate memory for our cache
+            }
+            while (1)
+            {
+                access = read_transaction(ptr_file);
+                //If no transactions left, break out of loop
+                if (access.address == 0)
+                    break;
+                if (access.accesstype == instruction)
+                {
+                    check_cache_DM(access.address, cache_instructions);
+                }
+                else
+                {
+                    check_cache_DM(access.address, cache_data);
+                }
+            }
+            free(cache_instructions);
+            free(cache_data);
+        }
+        else
+        {
+            cache_data_and_instructions = (uint32_t *)malloc(sizeof(uint32_t) * get_num_of_blocks());
+            if (cache_data_and_instructions == NULL)
+            {
+                exit(1); //failed to allocate memory for our cache
+            }
+            while (1)
+            {
+                access = read_transaction(ptr_file);
+                //If no transactions left, break out of loop
+                if (access.address == 0)
+                    break;
+                check_cache_DM(access.address, cache_data_and_instructions);
+            }
+            free(cache_data_and_instructions);
+        }
+
+        break;
+    case fa:
+        if (cache_org == sc)
+        {
+
+            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
+            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
+
+            if (cache_instructions == NULL || cache_data == NULL)
+            {
+                exit(1); //failed to allocate memory for our cache
+            }
+            while (1)
+            {
+                access = read_transaction(ptr_file);
+                //If no transactions left, break out of loop
+                if (access.address == 0)
+                    break;
+                if (access.accesstype == instruction)
+                {
+                    check_cache_FA(access.address, cache_instructions);
+                }
+                else
+                {
+                    check_cache_FA(access.address, cache_data);
+                }
+            }
+            free(cache_instructions);
+            free(cache_data);
+        }
+        else
+        {
+            cache_data_and_instructions = (uint32_t *)malloc(sizeof(uint32_t) * get_num_of_blocks());
+            if (cache_data_and_instructions == NULL)
+            {
+                exit(1); //failed to allocate memory for our cache
+            }
+            while (1)
+            {
+                access = read_transaction(ptr_file);
+                //If no transactions left, break out of loop
+                if (access.address == 0)
+                    break;
+                check_cache_FA(access.address, cache_data_and_instructions);
+            }
+            free(cache_data_and_instructions);
+        }
+
+        break;
+
+    default:
+        printf("Invalid input");
+        break;
     }
 
     /* Print the statistics */
@@ -244,5 +371,4 @@ void main(int argc, char **argv)
 
     /* Close the trace file */
     fclose(ptr_file);
-    free(cache);
 }
