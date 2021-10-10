@@ -48,6 +48,7 @@ uint32_t cache_size;
 uint32_t block_size = 64;
 cache_map_t cache_mapping;
 cache_org_t cache_org;
+
 uint32_t *cache_instructions;
 uint32_t *cache_data;
 uint32_t *cache_data_and_instructions;
@@ -83,7 +84,6 @@ mem_access_t read_transaction(FILE *ptr_file)
         }
         else
         {
-            printf("%s\n", token);
             printf("Unknown access type\n");
             exit(0);
         }
@@ -131,12 +131,12 @@ uint32_t get_tag_FA(uint32_t address)
     return (((1 << get_tag_size() + get_index_size()) - 1) & (address >> get_offset()));
 }
 
-void add(uint32_t element, uint32_t *cache)
+void add_to_cache(uint32_t element, uint32_t *cache)
 {
     if (count == get_num_of_blocks())
     {
-        delet(cache);
-        add(element, cache);
+        remove_from_cache(cache);
+        add_to_cache(element, cache);
     }
     else
     {
@@ -144,7 +144,7 @@ void add(uint32_t element, uint32_t *cache)
         count++;
     }
 }
-void delet(uint32_t *cache)
+void remove_from_cache(uint32_t *cache)
 {
     for (int i = 0; i < get_num_of_blocks() - 1; i++)
     {
@@ -185,7 +185,7 @@ void check_cache_FA(uint32_t address, uint32_t *cache)
             return;
         }
     }
-    add(tag, cache);
+    add_to_cache(tag, cache);
 }
 
 void main(int argc, char **argv)
