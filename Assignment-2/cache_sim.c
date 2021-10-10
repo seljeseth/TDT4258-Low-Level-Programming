@@ -102,6 +102,11 @@ mem_access_t read_transaction(FILE *ptr_file)
     return access;
 }
 
+uint32_t extract_bits(uint32_t bits, uint32_t nr_of_bits_to_extract, uint32_t start_position)
+{
+    return (((1 << nr_of_bits_to_extract) - 1) & (bits >> (start_position - 1)));
+}
+
 uint32_t get_num_of_blocks()
 {
     return cache_size / block_size;
@@ -110,29 +115,29 @@ uint32_t get_offset()
 {
     return log(block_size) / log(2);
 }
-uint32_t get_index_size()
+uint32_t get_index_size(uint32_t size_of_cache)
 {
-    return log(get_num_of_blocks()) / log(2);
+    return log(size_of_cache) / log(2);
 }
-uint32_t get_tag_size()
+uint32_t get_tag_size(uint32_t size_of_cache)
 {
-    return ((CHAR_BIT * sizeof(uint32_t)) - get_index_size() - get_offset());
+    return ((CHAR_BIT * sizeof(uint32_t)) - get_index_size(size_of_cache) - get_offset());
 }
-uint32_t get_index(uint32_t address)
+uint32_t get_index(uint32_t address, uint32_t size_of_cache)
 {
-    return (((1 << get_index_size()) - 1) & (address >> get_offset()));
+    return (((1 << get_index_size(size_of_cache)) - 1) & (address >> get_offset()));
 }
-uint32_t get_tag_DM(uint32_t address)
+uint32_t get_tag_DM(uint32_t address, uint32_t size_of_cache)
 {
-    return (((1 << get_tag_size()) - 1) & (address >> ((get_offset() + get_index_size()) - 1)));
+    return (((1 << get_tag_size(size_of_cache)) - 1) & (address >> ((get_offset() + get_index_size(size_of_cache)) - 1)));
 }
-uint32_t get_tag_FA(uint32_t address)
+uint32_t get_tag_FA(uint32_t address, uint32_t size_of_cache)
 {
-    return (((1 << (get_tag_size() + get_index_size())) - 1) & (address >> get_offset()));
+    return (((1 << (get_tag_size(size_of_cache) + get_index_size(size_of_cache))) - 1) & (address >> get_offset()));
 }
-void remove_from_cache(uint32_t *cache)
+void remove_from_cache(uint32_t *cache, uint32_t size_of_cache)
 {
-    for (int i = 0; i < get_num_of_blocks() - 1; i++)
+    for (int i = 0; i < size_of_cache - 1; i++)
     {
         cache[i] = cache[i + 1];
     }
@@ -142,7 +147,7 @@ void add_to_cache(uint32_t element, uint32_t *cache, uint32_t size_of_cache)
 {
     if (count == size_of_cache)
     {
-        remove_from_cache(cache);
+        remove_from_cache(cache, size_of_cache);
         add_to_cache(element, cache, size_of_cache);
     }
     else
@@ -152,11 +157,11 @@ void add_to_cache(uint32_t element, uint32_t *cache, uint32_t size_of_cache)
     }
 }
 
-void check_cache_DM(uint32_t address, uint32_t *cache)
+void check_cache_DM(uint32_t address, uint32_t *cache, uint32_t size_of_cache)
 {
     cache_statistics.accesses++;
-    uint32_t index = get_index(address);
-    uint32_t tag = get_tag_DM(address);
+    uint32_t index = get_index(address, size_of_cache);
+    uint32_t tag = get_tag_DM(address, size_of_cache);
 
     if (cache[index] == tag)
     {
@@ -170,7 +175,7 @@ void check_cache_DM(uint32_t address, uint32_t *cache)
 void check_cache_FA(uint32_t address, uint32_t *cache, uint32_t size_of_cache)
 {
     cache_statistics.accesses++;
-    uint32_t tag = get_tag_FA(address);
+    uint32_t tag = get_tag_FA(address, size_of_cache);
     for (int i = 0; i < size_of_cache; i++)
     {
         if (cache[i] == tag)
@@ -266,11 +271,11 @@ void main(int argc, char **argv)
                     break;
                 if (access.accesstype == instruction)
                 {
-                    check_cache_DM(access.address, cache_instructions);
+                    check_cache_DM(access.address, cache_instructions, size_of_cache);
                 }
                 else
                 {
-                    check_cache_DM(access.address, cache_data);
+                    check_cache_DM(access.address, cache_data, size_of_cache);
                 }
             }
             free(cache_instructions);
@@ -289,7 +294,7 @@ void main(int argc, char **argv)
                 //If no transactions left, break out of loop
                 if (access.address == 0)
                     break;
-                check_cache_DM(access.address, cache_data_and_instructions);
+                check_cache_DM(access.address, cache_data_and_instructions, get_num_of_blocks());
             }
             free(cache_data_and_instructions);
         }
@@ -353,8 +358,8 @@ void main(int argc, char **argv)
     /* Print the statistics */
     printf("Number of blocks: %d\n", get_num_of_blocks());
     printf("Size of offset: %d\n", get_offset());
-    printf("Size of index: %d\n", get_index_size());
-    printf("Size of tag: %d\n", get_tag_size());
+    printf("Size of index: %d\n", get_index_size(get_num_of_blocks()));
+    printf("Size of tag: %d\n", get_tag_size(get_num_of_blocks()));
 
     // DO NOT CHANGE THE FOLLOWING LINES!
     printf("\nCache Statistics\n");
