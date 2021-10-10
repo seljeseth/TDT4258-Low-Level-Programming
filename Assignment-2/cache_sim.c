@@ -256,9 +256,9 @@ void main(int argc, char **argv)
     case dm:
         if (cache_org == sc)
         {
-
-            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
-            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
+            uint32_t size_of_cache = get_num_of_blocks() / 2;
+            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
+            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
 
             if (cache_instructions == NULL || cache_data == NULL)
             {
@@ -305,8 +305,9 @@ void main(int argc, char **argv)
         if (cache_org == sc)
         {
 
-            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
-            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * (get_num_of_blocks() / 2));
+            uint32_t size_of_cache = get_num_of_blocks() / 2;
+            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
+            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
 
             if (cache_instructions == NULL || cache_data == NULL)
             {
