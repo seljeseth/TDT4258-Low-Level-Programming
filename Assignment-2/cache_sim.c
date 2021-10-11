@@ -8,14 +8,16 @@
 
 typedef enum
 {
-    dm,
-    fa
+    DM,
+    FA
 } cache_map_t;
+
 typedef enum
 {
-    uc,
-    sc
+    UC,
+    SC
 } cache_org_t;
+
 typedef enum
 {
     instruction,
@@ -32,30 +34,24 @@ typedef struct
 {
     uint64_t accesses;
     uint64_t hits;
-    // You can declare additional statistics if
-    // you like, however you are now allowed to
-    // remove the accesses or hits
+
 } cache_stat_t;
 
-typedef struct
-{
-    uint32_t *cache;
-    uint32_t count;
-} FA_cache;
-// DECLARE CACHES AND COUNTERS FOR THE STATS HERE
-
-uint32_t cache_size;
+uint32_t total_cache_size;
+uint32_t cache_partition_size;
 uint32_t block_size = 64;
 cache_map_t cache_mapping;
 cache_org_t cache_org;
 
+// If it's a split cache we have two different caches for instructions and data
 uint32_t *cache_instructions;
 uint32_t *cache_data;
-uint32_t *cache_data_and_instructions;
-uint32_t count = 0;
-// Cache info
 
-// USE THIS FOR YOUR CACHE STATISTICS
+// If it's a unified cache we only have one,
+// I could have used one of the caches above but for code readability I made a separat cache for it
+uint32_t *cache_data_and_instructions;
+
+uint32_t count = 0; // used in FIFO to keep track of how full the cache is
 cache_stat_t cache_statistics;
 
 /* Reads a memory access from the trace file and returns
@@ -102,53 +98,74 @@ mem_access_t read_transaction(FILE *ptr_file)
     return access;
 }
 
+// Method to extract a given number of bits from a set of bits, with a certian starting point in that bit set
+/***************************************************************************************
+*    Title: Extract ‘k’ bits from a given position in a number
+*    Author: GeeksforGeeks
+*    Date: 26 May, 2021
+*    Availability: https://www.geeksforgeeks.org/extract-k-bits-given-position-number/
+***************************************************************************************/
 uint32_t extract_bits(uint32_t bits, uint32_t nr_of_bits_to_extract, uint32_t start_position)
 {
-    return (((1 << nr_of_bits_to_extract) - 1) & (bits >> (start_position - 1)));
+    return (((1 << nr_of_bits_to_extract) - 1) & (bits >> (start_position)));
 }
 
-uint32_t get_num_of_blocks()
+// Getting the different sizes
+uint32_t num_of_blocks()
 {
-    return cache_size / block_size;
+    return (total_cache_size / block_size);
 }
-uint32_t get_offset()
+
+uint32_t offset()
 {
     return log(block_size) / log(2);
 }
-uint32_t get_index_size(uint32_t size_of_cache)
+
+uint32_t index_size()
 {
-    return log(size_of_cache) / log(2);
+    return log(cache_partition_size) / log(2);
 }
-uint32_t get_tag_size(uint32_t size_of_cache)
+
+uint32_t tag_size()
 {
-    return ((CHAR_BIT * sizeof(uint32_t)) - get_index_size(size_of_cache) - get_offset());
+    return ((CHAR_BIT * sizeof(uint32_t)) - index_size() - offset());
 }
-uint32_t get_index(uint32_t address, uint32_t size_of_cache)
+
+// Methods for getting different parts of the address we need to do the simulations
+uint32_t get_index(uint32_t address)
 {
-    return (((1 << get_index_size(size_of_cache)) - 1) & (address >> get_offset()));
+    return extract_bits(address, index_size(), offset());
 }
-uint32_t get_tag_DM(uint32_t address, uint32_t size_of_cache)
+
+uint32_t get_tag_DM(uint32_t address)
 {
-    return (((1 << get_tag_size(size_of_cache)) - 1) & (address >> ((get_offset() + get_index_size(size_of_cache)) - 1)));
+    return extract_bits(address, tag_size(), (offset() + index_size()));
 }
-uint32_t get_tag_FA(uint32_t address, uint32_t size_of_cache)
+
+uint32_t get_tag_FA(uint32_t address)
 {
-    return (((1 << (get_tag_size(size_of_cache) + get_index_size(size_of_cache))) - 1) & (address >> get_offset()));
+    return extract_bits(address, (tag_size() + index_size()), offset());
 }
-void remove_from_cache(uint32_t *cache, uint32_t size_of_cache)
+
+/***************************************************************************************
+ *                                      FIFO                                           *
+***************************************************************************************/
+// Method for removing the first item in our cache.
+void remove_from_cache(uint32_t *cache)
 {
-    for (int i = 0; i < size_of_cache - 1; i++)
+    for (int i = 0; i < cache_partition_size - 1; i++)
     {
         cache[i] = cache[i + 1];
     }
     count--;
 }
-void add_to_cache(uint32_t element, uint32_t *cache, uint32_t size_of_cache)
+// Method for adding a new item
+void add_to_cache(uint32_t element, uint32_t *cache)
 {
-    if (count == size_of_cache)
+    if (count == cache_partition_size)
     {
-        remove_from_cache(cache, size_of_cache);
-        add_to_cache(element, cache, size_of_cache);
+        remove_from_cache(cache);
+        add_to_cache(element, cache);
     }
     else
     {
@@ -156,12 +173,14 @@ void add_to_cache(uint32_t element, uint32_t *cache, uint32_t size_of_cache)
         count++;
     }
 }
+/***************************************************************************************/
 
-void check_cache_DM(uint32_t address, uint32_t *cache, uint32_t size_of_cache)
+// If the cache is directly mapped we only need to check if the tag of the address is at the index given
+void check_cache_DM(uint32_t address, uint32_t *cache)
 {
     cache_statistics.accesses++;
-    uint32_t index = get_index(address, size_of_cache);
-    uint32_t tag = get_tag_DM(address, size_of_cache);
+    uint32_t index = get_index(address);
+    uint32_t tag = get_tag_DM(address);
 
     if (cache[index] == tag)
     {
@@ -172,11 +191,12 @@ void check_cache_DM(uint32_t address, uint32_t *cache, uint32_t size_of_cache)
         cache[index] = tag;
     }
 }
-void check_cache_FA(uint32_t address, uint32_t *cache, uint32_t size_of_cache)
+
+void check_cache_FA(uint32_t address, uint32_t *cache)
 {
     cache_statistics.accesses++;
-    uint32_t tag = get_tag_FA(address, size_of_cache);
-    for (int i = 0; i < size_of_cache; i++)
+    uint32_t tag = get_tag_FA(address);
+    for (int i = 0; i < cache_partition_size; i++)
     {
         if (cache[i] == tag)
         {
@@ -184,7 +204,44 @@ void check_cache_FA(uint32_t address, uint32_t *cache, uint32_t size_of_cache)
             return;
         }
     }
-    add_to_cache(tag, cache, size_of_cache);
+    add_to_cache(tag, cache);
+}
+// Printing stats for the cache organization depending on what cache we are dealing with
+void print_cache_organization(cache_map_t map_type, cache_org_t org_type)
+{
+
+    printf("\nCache Organization\n");
+    printf("-----------------\n");
+    if (org_type == UC)
+    {
+        printf("Size: %d bytes\n", cache_partition_size * block_size);
+        printf("Organization: Unified Cache\n");
+    }
+    else
+    {
+        printf("Size: %d/%d bytes\n", cache_partition_size * block_size, cache_partition_size * block_size);
+        printf("Organization: Split Cache\n");
+    }
+    if (map_type == DM)
+    {
+        printf("Mapping: Direct Mapped\n");
+        printf("Size of index: %d\n", index_size());
+        printf("Size of tag: %d\n", tag_size());
+    }
+    else
+    {
+        printf("Mapping: Fully Associative\n");
+        // If we have a FA cache the index is absorbed by the tag
+        // This means that the tag_size will be equal to the size of tag plus the size of the index
+        printf("Size of index: 0\n");
+        printf("Size of tag: %d\n", tag_size() + index_size());
+    }
+    printf("Block Offset: %d\n", offset());
+    printf("-----------------\n\n");
+}
+
+void check_caches()
+{
 }
 
 void main(int argc, char **argv)
@@ -207,16 +264,16 @@ void main(int argc, char **argv)
         /* argv[0] is program name, parameters start with argv[1] */
 
         /* Set cache size */
-        cache_size = atoi(argv[1]);
+        total_cache_size = atoi(argv[1]);
 
         /* Set Cache Mapping */
         if (strcmp(argv[2], "dm") == 0)
         {
-            cache_mapping = dm;
+            cache_mapping = DM;
         }
         else if (strcmp(argv[2], "fa") == 0)
         {
-            cache_mapping = fa;
+            cache_mapping = FA;
         }
         else
         {
@@ -227,11 +284,11 @@ void main(int argc, char **argv)
         /* Set Cache Organization */
         if (strcmp(argv[3], "uc") == 0)
         {
-            cache_org = uc;
+            cache_org = UC;
         }
         else if (strcmp(argv[3], "sc") == 0)
         {
-            cache_org = sc;
+            cache_org = SC;
         }
         else
         {
@@ -249,125 +306,75 @@ void main(int argc, char **argv)
         exit(1);
     }
     mem_access_t access;
-    switch (cache_mapping)
+
+    // Sets what function we need to use when checking the cache
+    void (*check_cache)();
+    if (cache_mapping == FA)
     {
-
-    case dm:
-        if (cache_org == sc)
-        {
-            uint32_t size_of_cache = get_num_of_blocks() / 2;
-            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
-            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
-
-            if (cache_instructions == NULL || cache_data == NULL)
-            {
-                exit(1); //failed to allocate memory for our cache
-            }
-            while (1)
-            {
-                access = read_transaction(ptr_file);
-                //If no transactions left, break out of loop
-                if (access.address == 0)
-                    break;
-                if (access.accesstype == instruction)
-                {
-                    check_cache_DM(access.address, cache_instructions, size_of_cache);
-                }
-                else
-                {
-                    check_cache_DM(access.address, cache_data, size_of_cache);
-                }
-            }
-            free(cache_instructions);
-            free(cache_data);
-        }
-        else
-        {
-            cache_data_and_instructions = (uint32_t *)malloc(sizeof(uint32_t) * get_num_of_blocks());
-            if (cache_data_and_instructions == NULL)
-            {
-                exit(1); //failed to allocate memory for our cache
-            }
-            while (1)
-            {
-                access = read_transaction(ptr_file);
-                //If no transactions left, break out of loop
-                if (access.address == 0)
-                    break;
-                check_cache_DM(access.address, cache_data_and_instructions, get_num_of_blocks());
-            }
-            free(cache_data_and_instructions);
-        }
-
-        break;
-    case fa:
-        if (cache_org == sc)
-        {
-
-            uint32_t size_of_cache = get_num_of_blocks() / 2;
-            cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
-            cache_data = (uint32_t *)malloc(sizeof(uint32_t) * size_of_cache);
-
-            if (cache_instructions == NULL || cache_data == NULL)
-            {
-                exit(1); //failed to allocate memory for our cache
-            }
-            while (1)
-            {
-                access = read_transaction(ptr_file);
-                //If no transactions left, break out of loop
-                if (access.address == 0)
-                    break;
-                if (access.accesstype == instruction)
-                {
-                    check_cache_FA(access.address, cache_instructions, size_of_cache);
-                }
-                else
-                {
-                    check_cache_FA(access.address, cache_data, size_of_cache);
-                }
-            }
-            free(cache_instructions);
-            free(cache_data);
-        }
-        else
-        {
-            cache_data_and_instructions = (uint32_t *)malloc(sizeof(uint32_t) * get_num_of_blocks());
-            if (cache_data_and_instructions == NULL)
-            {
-                exit(1); //failed to allocate memory for our cache
-            }
-            while (1)
-            {
-                access = read_transaction(ptr_file);
-                //If no transactions left, break out of loop
-                if (access.address == 0)
-                    break;
-                check_cache_FA(access.address, cache_data_and_instructions, get_num_of_blocks());
-            }
-            free(cache_data_and_instructions);
-        }
-
-        break;
-
-    default:
-        printf("Invalid input");
-        break;
+        check_cache = check_cache_FA;
+    }
+    else
+    {
+        check_cache = check_cache_DM;
     }
 
-    /* Print the statistics */
-    printf("Number of blocks: %d\n", get_num_of_blocks());
-    printf("Size of offset: %d\n", get_offset());
-    printf("Size of index: %d\n", get_index_size(get_num_of_blocks()));
-    printf("Size of tag: %d\n", get_tag_size(get_num_of_blocks()));
+    // Do the simulation on a split cache or a unified one
+    if (cache_org == SC)
+    {
+        cache_partition_size = num_of_blocks() / 2;
+        cache_instructions = (uint32_t *)malloc(sizeof(uint32_t) * cache_partition_size);
+        cache_data = (uint32_t *)malloc(sizeof(uint32_t) * cache_partition_size);
+
+        if (cache_instructions == NULL || cache_data == NULL)
+        {
+            exit(1); //failed to allocate memory for our cache
+        }
+        while (1)
+        {
+            access = read_transaction(ptr_file);
+            //If no transactions left, break out of loop
+            if (access.address == 0)
+                break;
+            if (access.accesstype == instruction)
+            {
+                // Depending on if we have a FA or a DM cache this function will vary
+                check_cache(access.address, cache_instructions);
+            }
+            else
+            {
+                check_cache(access.address, cache_data);
+            }
+        }
+        free(cache_instructions);
+        free(cache_data);
+    }
+    else
+    {
+        cache_partition_size = num_of_blocks();
+        cache_data_and_instructions = (uint32_t *)malloc(sizeof(uint32_t) * cache_partition_size);
+        if (cache_data_and_instructions == NULL)
+        {
+            exit(1); //failed to allocate memory for our cache
+        }
+        while (1)
+        {
+            access = read_transaction(ptr_file);
+            //If no transactions left, break out of loop
+            if (access.address == 0)
+                break;
+            check_cache(access.address, cache_data_and_instructions);
+        }
+        free(cache_data_and_instructions);
+    }
+
+    print_cache_organization(cache_mapping, cache_org);
 
     // DO NOT CHANGE THE FOLLOWING LINES!
     printf("\nCache Statistics\n");
-    printf("-----------------\n\n");
+    printf("-----------------\n");
     printf("Accesses: %ld\n", cache_statistics.accesses);
     printf("Hits:     %ld\n", cache_statistics.hits);
     printf("Hit Rate: %.4f\n", (double)cache_statistics.hits / cache_statistics.accesses);
-    // You can extend the memory statistic printing if you like!
 
     /* Close the trace file */
     fclose(ptr_file);
