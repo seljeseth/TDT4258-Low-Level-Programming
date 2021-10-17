@@ -1,4 +1,7 @@
 /.DS_Store
 /Icon
-/.vscode
 *.o
+*.vscode/
+*build/
+*.out
+*main
