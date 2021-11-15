@@ -8,6 +8,11 @@
 #include <string.h>
 #include <time.h>
 #include <poll.h>
+#include <linux/fb.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <dirent.h>
 
 // The game state can be used to detect what happens on the playfield
 #define GAMEOVER 0
@@ -15,10 +20,32 @@
 #define ROW_CLEAR (1 << 1)
 #define TILE_ADDED (1 << 2)
 
+// Variables added by me
+#define FILEPATH_TO_FB "/dev/fb"
+#define FILEPATH_TO_JOYSTICK "/dev/input/event"
+#define NUM_OF_TILES 64
+#define SIZE_OF_MATRIX (NUM_OF_TILES * sizeof(u_int16_t)) // We have 8x8 tiles and each pixel is 16 bits
+#define DIMENSION 8                                       // Our matrix is 8 tiles wide and 8 tiles high
+
+int colors[] = {
+    0xF800, // Red
+    0xFFE0, // Yellow
+    0x7E0,  // Green
+    0x7FF,  // Cyan
+    0xF81F  // Magenta
+};
+
+int frame_buffer = 0;
+int joystick = 0;
+u_int16_t *frame_buffer_pointer = 0;
+struct fb_fix_screeninfo fix_info;
+struct input_event input_event;
+
 // If you extend this structure, either avoid pointers or adjust
 // the game logic allocate/deallocate and reset the memory
 typedef struct
 {
+    int color;
     bool occupied;
 } tile;
 
@@ -58,11 +85,132 @@ gameConfig game = {
     .initNextGameTick = 50,
 };
 
+// Returns a color from the list of colors at random, used when initalizing a tile
+int getColor()
+{
+    int array_length = sizeof(colors) / sizeof(int);
+    return colors[rand() % array_length];
+}
+
+// Helping method for looping over the different frame buffer's and devices.
+// Returns the number of matches on a path with a certain type
+int getCount(const char *path, const char *type)
+{
+    DIR *directory_stream;
+    struct dirent *dir;
+    directory_stream = opendir(path);
+    int count = 0;
+    if (directory_stream)
+    {
+        // Checks all the file names
+        while ((dir = readdir(directory_stream)) != NULL)
+        {
+            // If we have a match we add it to the framebuffers we need to check
+            if (strncmp(type, dir->d_name, 2) == 0)
+            {
+                count++;
+            }
+        }
+        closedir(directory_stream);
+    }
+    return count;
+}
+
+bool setFrameBuffer()
+{
+    int fb;
+    int nr_of_frame_buffers = getCount("/dev", "fb");
+    for (size_t i = 0; i < nr_of_frame_buffers; i++)
+    {
+        // Creating the path to the different framebuffers we are checking
+        char path[256] = {};
+        strcat(path, FILEPATH_TO_FB);
+        sprintf(&path[strlen(path)], "%d", i);
+
+        // Open the path we found and check if the id is the same we are looking for
+        fb = open(path, O_RDWR);
+        if (!fb)
+        {
+            return false;
+        }
+        // Filling in the info of the frame buffer's fixed screen info
+        if (ioctl(fb, FBIOGET_FSCREENINFO, &fix_info))
+        {
+            close(fb);
+            return false;
+        }
+        // If we have a match on the frame buffer we set the global variable
+        // to the right framebuffer
+        if (strcmp(fix_info.id, "RPi-Sense FB") == 0)
+        {
+            frame_buffer = fb;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool setJoystick()
+{
+    int js;
+    int nr_of_devices = getCount("/dev/input", "event");
+    for (size_t i = 0; i < nr_of_devices; i++)
+    {
+
+        char path[256] = {};
+        char name[256] = {}; // Name of the device we are matching to the raspberry Pi
+
+        // Finding the path we need to check the device on
+        strcat(path, FILEPATH_TO_JOYSTICK);
+        sprintf(&path[strlen(path)], "%d", i);
+        js = open(path, O_RDWR);
+
+        if (!js)
+        {
+            return false;
+        }
+        // Getting the name of the device
+        ioctl(js, EVIOCGNAME(sizeof(name)), &name);
+
+        // If the name matches the raspberry pie we have our joystick
+        if (strcmp(name, "Raspberry Pi Sense HAT Joystick") == 0)
+        {
+
+            joystick = js;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // This function is called on the start of your application
 // Here you can initialize what ever you need for your task
 // return false if something fails, else true
 bool initializeSenseHat()
 {
+    if (!setFrameBuffer())
+    {
+        printf("Could not find framebuffer\n");
+        return false;
+    }
+
+    // Mapping it to the virtual memory for the frame buffer
+    frame_buffer_pointer = mmap(NULL, SIZE_OF_MATRIX, PROT_READ | PROT_WRITE, MAP_SHARED, frame_buffer, 0);
+    if (frame_buffer_pointer == MAP_FAILED)
+    {
+        close(frame_buffer);
+        return false;
+    }
+    // Turning off the led lights on the sensehat
+    memset(frame_buffer_pointer, 0, SIZE_OF_MATRIX);
+
+    // Setting up the joystick
+    if (!setJoystick())
+    {
+        printf("Could not find joystick\n");
+        return false;
+    }
     return true;
 }
 
@@ -70,6 +218,14 @@ bool initializeSenseHat()
 // Here you can free up everything that you might have opened/allocated
 void freeSenseHat()
 {
+    // Turning off the led lights on the sensehat
+    memset(frame_buffer_pointer, 0, SIZE_OF_MATRIX);
+    if (munmap(frame_buffer_pointer, SIZE_OF_MATRIX) == -1)
+    {
+        printf("Unable to un-map\n");
+    }
+    close(frame_buffer);
+    close(joystick);
 }
 
 // This function should return the key that corresponds to the joystick press
@@ -78,7 +234,30 @@ void freeSenseHat()
 // !!! when nothing was pressed you MUST return 0 !!!
 int readSenseHatJoystick()
 {
-    return 0;
+    int flags = fcntl(joystick, F_GETFL, 0);
+
+    // Makes sure the game keeps ticking
+    fcntl(joystick, F_SETFL, flags | O_NONBLOCK);
+
+    read(joystick, &input_event, sizeof(input_event));
+
+    // Ensures we can hold the key to get continues movements in that direction
+    // and only press once to move
+    if (input_event.value == 1 || input_event.value == 2)
+    {
+        switch (input_event.code)
+        {
+        case 106:
+            return KEY_RIGHT;
+        case 105:
+            return KEY_LEFT;
+        case 108:
+            return KEY_DOWN;
+        case 28:
+            return KEY_ENTER;
+        }
+        return 0;
+    }
 }
 
 // This function should render the gamefield on the LED matrix. It is called
@@ -86,7 +265,22 @@ int readSenseHatJoystick()
 // has changed the playfield
 void renderSenseHatMatrix(bool const playfieldChanged)
 {
-    (void)playfieldChanged;
+    if (playfieldChanged)
+    {
+        for (int x = 0; x < DIMENSION; x++)
+        {
+            for (int y = 0; y < DIMENSION; y++)
+
+                if (game.playfield[y][x].occupied)
+                {
+                    frame_buffer_pointer[x + (DIMENSION * y)] = game.playfield[y][x].color;
+                }
+                else
+                {
+                    frame_buffer_pointer[x + (DIMENSION * y)] = 0;
+                }
+        }
+    }
 }
 
 // The game logic uses only the following functions to interact with the playfield.
@@ -96,6 +290,7 @@ void renderSenseHatMatrix(bool const playfieldChanged)
 static inline void newTile(coord const target)
 {
     game.playfield[target.y][target.x].occupied = true;
+    game.playfield[target.y][target.x].color = getColor();
 }
 
 static inline void copyTile(coord const to, coord const from)
@@ -404,6 +599,7 @@ void renderConsole(bool const playfieldChanged)
     {
         fprintf(stdout, "-");
     }
+    fprintf(stdout, "\n");
     fflush(stdout);
 }
 
@@ -416,6 +612,7 @@ int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
+    int ret = 0;
     // This sets the stdin in a special state where each
     // keyboard press is directly flushed to the stdin and additionally
     // not outputted to the stdout
@@ -433,7 +630,8 @@ int main(int argc, char **argv)
     if (!game.playfield || !game.rawPlayfield)
     {
         fprintf(stderr, "ERROR: could not allocate playfield\n");
-        return 1;
+        ret = 1;
+        goto exit;
     }
     for (unsigned int y = 0; y < game.grid.y; y++)
     {
@@ -448,7 +646,8 @@ int main(int argc, char **argv)
     if (!initializeSenseHat())
     {
         fprintf(stderr, "ERROR: could not initilize sense hat\n");
-        return 1;
+        ret = 1;
+        goto exit;
     };
 
     // Clear console, render first time
@@ -485,5 +684,12 @@ int main(int argc, char **argv)
     free(game.playfield);
     free(game.rawPlayfield);
 
-    return 0;
+exit:
+{
+    struct termios ttystate;
+    tcgetattr(STDIN_FILENO, &ttystate);
+    ttystate.c_lflag |= (ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
+}
+    return ret;
 }
